@@ -1,0 +1,54 @@
+name: unit test
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [ opened, synchronize, reopened ]
+
+jobs:
+  unit_test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup PHP with PECL extension
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          # extensions: imagick, swoole
+
+      - name: cache vendor
+        id: cache
+        uses: actions/cache@v3
+        with:
+          path: src/vendor
+          key: ${{ runner.os }}-composer-${{ hashFiles('src/composer.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-composer-
+
+      - name: composer install
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: composer install
+        working-directory: ./src
+
+      - name: cache node_module
+        id: node-cache
+        uses: actions/cache@v3
+        with:
+          path: src/node_modules
+          key: ${{ runner.os }}-node-${{ hashFiles('src/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
+      - name: npm install
+        if: steps.node-cache.outputs.cache-hit != 'true'
+        run: npm i
+        working-directory: ./src
+
+      - name: npm run build
+        run: npm run build
+        working-directory: ./src
+
+      - name: run unit test
+        run: vendor/bin/phpunit tests/
+        working-directory: ./src

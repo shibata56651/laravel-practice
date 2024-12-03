@@ -1,0 +1,124 @@
+name: production deploy for ec2
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: 'If run flow production deploy, input "production".'
+        required: true
+        default: ''
+
+env:
+  SRC_DIR: ./src
+  PARAMETER_STORE_ENV_FILE_NAME: ${{ secrets.PROD_AWS_PARAMETER_STORE_ENV_FILE_NAME }}
+  DEPLOY_APP_NAME: ${{ secrets.PROD_AWS_DEPLOY_APP_NAME }}
+  DEPLOY_GROUP_NAME: ${{ secrets.PROD_AWS_DEPLOY_GROUP_NAME }}
+  DEPLOY_SOURCE_BUCKET_NAME: ${{ secrets.PROD_AWS_DEPLOY_SOURCE_BUCKET_NAME }}
+  CHECK_DEPLOY_GROUP_NAME: ${{ secrets.PROD_AWS_CHECK_DEPLOY_GROUP_NAME }}
+  IAM_ROLE_ARN: ${{ secrets.PROD_AWS_IAM_ROLE_GITHUBACTIONS_ARN}}
+  SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
+  SLACK_USERNAME: GitHub Actions
+  SLACK_SUCCESS_MESSAGE: "prod-tantei-server-deploy-success"
+  SLACK_FAILURE_MESSAGE: "prod-tantei-server-deploy-failure"
+
+jobs:
+  ec2_deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      # 入力値チェック
+      - name: target varidate
+        if: ${{ github.event_name != 'pull_request' && github.event.inputs.env != 'production' }}
+        run: exit 1
+      
+      # BranchをCheckout
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      # ODICによるAWS認証
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ap-northeast-1
+          role-to-assume: ${{ env.IAM_ROLE_ARN }}
+          role-session-name: GitHubActions-${{ github.run_id }}
+
+      # .envファイルの取得
+      - name: Get .env file
+        working-directory: ${{ env.SRC_DIR }}
+        run: |
+          aws ssm get-parameter \
+          --with-decryption \
+          --name ${{ env.PARAMETER_STORE_ENV_FILE_NAME }} \
+          --query Parameter.Value | \
+          sed -e 's/^"//' -e 's/"$//' -e 's/\\\"/\"/g' | \
+          awk '{gsub(/\\n/,"\n")}1' > .env
+
+      - name: Cache vendor
+        id: cache
+        uses: actions/cache@v3
+        with:
+          ref: main
+          path: ./vendor
+          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-composer-
+
+      # 依存関係のインストール
+      - name: Install dependencies
+        working-directory: ${{ env.SRC_DIR }}
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: composer install --prefer-dist --no-interaction --optimize-autoloader
+
+      # アーカイブ用に必要ファイルをコピー
+      - name: Copy required files for deployment archive
+        run: |
+          cp ./.github/appspec.yml ${{ env.SRC_DIR }}/appspec.yml
+          cp -r ./.github/scripts/production ${{ env.SRC_DIR }}/scripts
+
+      # ソースコードのアップロード
+      - name: Deploy Laravel application to S3 and capture eTag
+        id: s3-deploy
+        working-directory: ${{ env.SRC_DIR }}
+        run: |
+          OUTPUT=$(aws deploy push \
+            --application-name ${{ env.DEPLOY_APP_NAME }} \
+            --s3-location s3://${{ env.DEPLOY_SOURCE_BUCKET_NAME }}/server_source.zip --no-ignore-hidden-files)
+          echo "$OUTPUT"
+          ETAG=$(echo "$OUTPUT" | grep -oP 'eTag=\K[^ ]+')
+          echo "etag=$ETAG" >> $GITHUB_OUTPUT
+
+      # デプロイの実行
+      - name: Create deployment with AWS CodeDeploy
+        id: create-deployment
+        run: |
+          DEPLOYMENT_ID=$(aws deploy create-deployment \
+            --application-name ${{ env.DEPLOY_APP_NAME }} \
+            --deployment-group-name ${{ env.DEPLOY_GROUP_NAME }} \
+            --deployment-config-name CodeDeployDefault.OneAtATime \
+            --s3-location bucket=${{ env.DEPLOY_SOURCE_BUCKET_NAME }},bundleType=zip,key=server_source.zip,eTag=${{ steps.s3-deploy.outputs.etag }} \
+            --query 'deploymentId' --output text)
+          echo "deployment_id=$DEPLOYMENT_ID" >> $GITHUB_OUTPUT
+      
+      # デプロイの結果確認
+      - name: Wait for deployment to complete
+        id: wait-for-deployment
+        run: |
+          aws deploy wait deployment-successful --deployment-id ${{ steps.create-deployment.outputs.deployment_id }}
+            
+      # Slack通知
+      - name: Slack notification on success
+        if: ${{ success() }}
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_COLOR: good
+          SLACK_MESSAGE: ${{ env.SLACK_SUCCESS_MESSAGE }}
+
+      - name: Slack notification on failure
+        if: ${{ failure() }}
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_COLOR: danger
+          SLACK_MESSAGE: ${{ env.SLACK_FAILURE_MESSAGE }}

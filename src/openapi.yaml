@@ -1,0 +1,138 @@
+openapi: 3.0.0
+info:
+  title: BGバックエンドサンプルAPI
+  description: BGバックエンドサンプルAPI
+  version: 0.0.0
+servers:
+  -
+    url: 'http://localhost:8081/api/v1'
+    description: localhost
+paths:
+  /login:
+    post:
+      tags:
+        - Authentication
+      summary: 運営者のログイン
+      description: IDとパスワードを使って運営者を認証します。
+      operationId: loginAdmin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        200:
+          description: 正常なレスポンス
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        401:
+          description: 認証失敗
+  /logout:
+    get:
+      tags:
+        - Authentication
+      summary: 運営者のログアウト
+      description: 現在の運営者セッションを終了します。
+      operationId: logoutAdmin
+      responses:
+        200:
+          description: ログアウト成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LogoutResponse'
+  '/admins/{id}':
+    get:
+      tags:
+        - Admins
+      summary: 特定の運営者の詳細情報を取得
+      description: 与えられたIDに基づいて運営者の詳細情報を取得します。
+      operationId: getAdminDetail
+      parameters:
+        -
+          name: id
+          in: path
+          description: 取得する運営者のID
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        200:
+          description: 正常なレスポンス
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminResponse'
+      security:
+        -
+          bearerAuth: []
+components:
+  schemas:
+    Admin:
+      title: Admin
+      description: ユーザ情報
+      properties:
+        id:
+          description: 運営者ID
+          type: integer
+          example: '1'
+        name:
+          description: 運営者のフルネーム
+          type: string
+          example: テスト太郎
+        password:
+          description: 'パスワード(基本null, 更新時に値が入る)'
+          type: string
+          example: xxxxx
+      type: object
+    LoginRequest:
+      required:
+        - email
+        - password
+      properties:
+        email:
+          description: 運営者のメールアドレス
+          type: string
+          example: admin@bltinc.co.jp
+        password:
+          description: 運営者のパスワード
+          type: string
+          example: bltinc123
+      type: object
+    LoginResponse:
+      allOf:
+        -
+          $ref: '#/components/schemas/BaseResponse'
+    LogoutResponse:
+      allOf:
+        -
+          $ref: '#/components/schemas/BaseResponse'
+    BaseResponse:
+      properties:
+        data:
+          description: リクエストに応じたデータ
+          type: array
+          items: {}
+        status:
+          description: HTTPステータスコード
+          type: integer
+      type: object
+    AdminResponse:
+      allOf:
+        -
+          $ref: '#/components/schemas/BaseResponse'
+        -
+          properties:
+            data:
+              $ref: '#/components/schemas/Admin'
+          type: object
+  securitySchemes:
+    bearerAuth:
+      type: http
+      description: 'Bearer tokenが必要です'
+      bearerFormat: JWT
+      scheme: bearer

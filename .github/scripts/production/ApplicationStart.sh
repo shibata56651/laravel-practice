@@ -1,0 +1,1 @@
+systemctl restart php-fpm.service

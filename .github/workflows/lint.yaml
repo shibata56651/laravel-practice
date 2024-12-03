@@ -1,0 +1,50 @@
+name: lint
+
+on:
+  workflow_dispatch:
+    inputs:
+      option:
+        description: 'pint option.'
+        required: false
+        default: '--test'
+  pull_request:
+    types: [ opened, synchronize, reopened ]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+  
+      - name: Setup PHP with PECL extension
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          # extensions: imagick, swoole
+
+      - name: cache vendor
+        id: cache
+        uses: actions/cache@v3
+        with:
+          path: src/vendor
+          key: ${{ runner.os }}-composer-${{ hashFiles('src/composer.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-composer-
+  
+      - name: composer install
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: composer install
+        working-directory: ./src
+
+      - name: run lint
+        run: vendor/bin/pint ${{ github.event.inputs.option }}
+        working-directory: ./src
+
+      # 自動コミット
+      - name: Auto Commit
+        if: ${{ github.event_name == 'pull_request' || !contains(github.event.inputs.option,'test') }}
+        uses: stefanzweifel/git-auto-commit-action@v4
+        with:
+          commit_message: Pintによる自動コミット

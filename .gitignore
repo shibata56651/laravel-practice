@@ -1,0 +1,12 @@
+.env
+!.env.example
+.idea/.gitignore
+.idea/dataSources.xml
+.idea/misc.xml
+.idea/modules.xml
+.idea/php.xml
+.idea/phpunit.xml
+.idea/tantei-madoguchi-server.iml
+.idea/vcs.xml
+.docker/nginx/localhost-key.pem
+.docker/nginx/localhost.pem
